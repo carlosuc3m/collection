@@ -8,6 +8,7 @@ import json
 import os
 import re
 import sys
+import shutil
 import argparse
 import subprocess
 import traceback
@@ -272,6 +273,10 @@ def check_compatibility_deepimagej_impl(
             rdf_url, fiji_executable, fiji_path, deepimagej_version
         )
 
+    # Delete the tested model to avoid exceeding the CI disk space
+    if os.path.exists(os.path.join(fiji_path, "models")):
+        shutil.rmtree(os.path.join(fiji_path, "models"))
+    os.makedirs(os.path.join(fiji_path, "models"))
     return report
 
 
