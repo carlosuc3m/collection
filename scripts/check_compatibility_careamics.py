@@ -1,35 +1,26 @@
 import traceback
-from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Protocol, Tuple, Union
+from typing import List, Optional, Protocol
 
 import pydantic
 from bioimageio.core.digest_spec import get_test_inputs
 from bioimageio.spec import load_model_description
-from bioimageio.spec.common import HttpUrl, Sha256
+from bioimageio.spec.common import Sha256
 from bioimageio.spec.model import AnyModelDescr
 from bioimageio.spec.model.v0_5 import AxisId, ModelDescr
+
 from careamics import CAREamist
 from careamics import __version__ as CAREAMICS_VERSION
-from careamics.config import Configuration
-from careamics.lightning import FCNModule, VAEModule
-from careamics.model_io.bmz_io import load_from_bmz
 
 from backoffice.check_compatibility import check_tool_compatibility
 from backoffice.compatibility_pure import ToolCompatibilityReportDict
 
 
-@lru_cache
-def careamics_load_from_bmz(
-    rdf_url: Union[HttpUrl, pydantic.DirectoryPath],
-) -> Tuple[Union[FCNModule, VAEModule], Configuration]:
-    return load_from_bmz(rdf_url)
-
-
 class CompatibilityCheck_v0_5(Protocol):
     def __call__(
         self, model_desc: ModelDescr, rdf_url: str
-    ) -> Optional[ToolCompatibilityReportDict]: ...
+    ) -> Optional[ToolCompatibilityReportDict]:
+        ...
 
 
 def check_model_desc_v0_5(
@@ -75,7 +66,6 @@ def check_has_careamics_config(
     attachment_file_names = [
         Path(path).name for path in attachment_file_paths if path is not None
     ]
-    # TODO: update to careamics.yaml once files have been updated
     if "careamics.yaml" not in attachment_file_names:
         return ToolCompatibilityReportDict(
             status="failed",
@@ -90,7 +80,7 @@ def check_careamics_can_load(
     model_desc: ModelDescr, rdf_url: str
 ) -> Optional[ToolCompatibilityReportDict]:
     try:
-        _ = careamics_load_from_bmz(rdf_url)
+        _ = CAREamist(bmz_path=rdf_url)
     except (ValueError, pydantic.ValidationError):
         report = ToolCompatibilityReportDict(
             status="failed",
@@ -105,12 +95,8 @@ def check_careamics_can_load(
 def check_careamics_can_predict(
     model_desc: ModelDescr, rdf_url: str
 ) -> Optional[ToolCompatibilityReportDict]:
-    model, config = careamics_load_from_bmz(rdf_url)
-
-    # initialise CAREamist
-    careamist = CAREamist(config)
-    # TODO (CAREamics): make a model loading method, why doesn't this exist
-    careamist.model = model
+    careamist = CAREamist(bmz_path=rdf_url)
+    config = careamist.config
 
     # get input tensor
     input_sample = get_test_inputs(model_desc)
@@ -124,7 +110,7 @@ def check_careamics_can_predict(
 
     try:
         _ = careamist.predict(
-            source=input_array,
+            pred_data=input_array,
             data_type="array",
             axes="SCZYX" if "Z" in config.data_config.axes else "SCYX",
         )
@@ -192,4 +178,9 @@ def check_compatibility_careamics() -> None:
 
 
 if __name__ == "__main__":
-    check_compatibility_careamics()
+    model_path = "CAREamics/saved_models/Noise2Void_2D_careamics_n2v"
+    # model_path = "CAREamics/saved_models/Noise2Void_2D_careamics_n2v.zip"
+    model_desc = load_model_description(model_path)
+    check_has_careamics_config(model_desc, rdf_url=None)
+    check_careamics_can_load(model_desc, model_path)
+    check_careamics_can_predict(model_desc, model_path)
