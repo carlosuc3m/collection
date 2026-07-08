@@ -38,6 +38,8 @@ ToolNameVersioned = str
 
 
 class Node(BaseModel):
+    """Base data model with common config"""
+
     pass
 
 
@@ -141,7 +143,7 @@ class CompatibilityScores(Node):
                 version = Version("0.0.0")
                 malus += 0.1  # penalize non-semver versions
 
-            grouped.setdefault(tool_name, {})[version] = value - malus
+            grouped.setdefault(tool_name, {})[version] = max(0, value - malus)
 
         for tool in list(grouped):
             if not grouped[tool]:
@@ -159,6 +161,8 @@ class CompatibilityScores(Node):
                 # as penalty if the last_version isn't fully compatible
                 top4 = sorted(version_scores.values(), reverse=True)[:4]
                 score = min(0.8, sum(top4) / len(top4))
+                # however, this score cannot be lower than the latest version score
+                score = max(score, version_scores[latest_version])
 
             agglomerated[tool] = score
 

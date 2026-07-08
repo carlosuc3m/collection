@@ -2,6 +2,12 @@ name: check compatibility ilastik
 
 on:
   workflow_call:
+    inputs:
+      recompute-reports-pattern:
+        type: string
+        description: Glob file name pattern to skip reports with (to recompute them).
+        required: false
+        default: ''
 
 jobs:
   setup:
@@ -39,17 +45,26 @@ jobs:
       - uses: ./.github/actions/restore_reports
         with:
           tool: ilastik
+          recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
       - name: Download ilastik env
         run: wget --output-document env.yaml ${{ matrix.env_url }}
       - name: ignore unrelated packages
         run: sed -i '/multi-hypotheses-tracking-with-gurobi/d; /gurobi-symlink/d' env.yaml
-      - name: Setup ilastik env
-        uses: mamba-org/setup-micromamba@v1
+      - name: Cache conda
+        uses: actions/cache@v4
+        env:
+          CACHE_NUMBER: 0
         with:
-          generate-run-shell: false
+          path: ~/conda_pkgs_dir
+          key: ${{ runner.os }}-conda-${{ env.CACHE_NUMBER }}-${{ hashFiles('env.yaml') }}
+      - name: Setup ilastik env
+        uses: conda-incubator/setup-miniconda@v3
+        with:
+          activate-environment: ilastik-env
+          auto-update-conda: true
+          channel-priority: flexible
+          conda-remove-defaults: 'true'
           environment-file: env.yaml
-          cache-downloads: true
-          cache-environment: false # gets stuck for 6h?
       - run: pip install . --no-deps # no-deps to avoid changing the ilastik environment
         shell: bash -l {0}
       - name: test published versions with ilastik ${{ matrix.v }}

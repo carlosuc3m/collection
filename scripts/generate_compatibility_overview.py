@@ -3,10 +3,115 @@
 import html
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import mkdocs_gen_files
+from bioimageio.spec.summary import ValidationSummary
+from packaging.version import parse as parse_version
 
 from backoffice.index import load_index
 from backoffice.utils_pure import get_summary_file_path
+
+# Initialize navigation for gen-files plugin
+nav = mkdocs_gen_files.nav.Nav()
+
+
+def generate_compatibility_page(
+    resource_id: str,
+    version: str,
+    core_details: dict[str, Any],
+    output_dir: Path,
+) -> Path:
+    """Generate an individual compatibility report with ValidationSummary HTML.
+
+    Args:
+        resource_id: The resource ID (short form, without prefix)
+        version: The resource version
+        core_details: The core report details from summary.json
+        output_dir: Directory to write the report page
+
+    Returns:
+        Path to the generated compatibility report page (relative to docs/)
+    """
+    # Convert details dict to ValidationSummary
+    try:
+        validation_summary = ValidationSummary.model_validate(core_details)
+        html_content = validation_summary.format_html()
+
+        # Patch the hard-coded colors to be theme-aware
+        # Replace hard-coded background and text colors with CSS variables
+        html_content = html_content.replace(
+            "color: #000000;", "color: var(--md-default-fg-color);"
+        )
+        html_content = html_content.replace(
+            "background-color: #ffffff;",
+            "background-color: var(--md-default-bg-color);",
+        )
+
+        # Make color classes theme-aware by using filter/opacity for dark mode
+        # Add theme-aware styles that work in both light and dark modes
+        theme_aware_styles = """
+<style>
+/* Theme-aware overrides for ValidationSummary */
+@media (prefers-color-scheme: dark) {
+    .r1 { color: #ff9999 !important; }
+    .r2 { color: #ff9999 !important; font-weight: bold; }
+    .r3 { color: #ffcccc !important; font-weight: bold; }
+    .r4 { color: #b0b0b0 !important; }
+    .r5 { color: #8888ff !important; }
+    .r6 { color: #ff88ff !important; }
+    .r7 { color: #ffff88 !important; }
+    .r8 { color: #ff6666 !important; font-weight: bold; }
+    .r9 { color: #ff88ff !important; font-weight: bold; }
+    .r11 { color: #88ff88 !important; }
+    .r13 { color: #88ffff !important; }
+    .r14 { color: #b0b0b0 !important; }
+    .r15 { color: #88ffff !important; text-decoration: underline; }
+}
+/* Horizontal scrolling container for wide reports */
+.validation-summary-container {
+    overflow-x: auto;
+    width: 100%;
+    margin: 20px 0;
+}
+</style>
+"""
+        # Insert theme-aware styles and wrap content in scrollable container
+        html_content = (
+            theme_aware_styles
+            + '<div class="validation-summary-container">'
+            + html_content
+            + "</div>"
+        )
+
+    except Exception as e:
+        html_content = (
+            f"<p>Error rendering validation summary: {html.escape(str(e))}</p>"
+        )
+
+    # Create markdown file with HTML content
+    # Replace colons with double dash for filesystem compatibility
+    safe_resource_id = resource_id.replace(":", "--")
+    relative_path = Path(output_dir) / safe_resource_id / f"{version}_core.md"
+
+    markdown_content = f"""---
+title: {resource_id}/{version} - Core Compatibility Report
+---
+
+# Core Compatibility Report: {resource_id}/{version}
+
+{html_content}
+"""
+
+    # Write using gen-files plugin
+    with mkdocs_gen_files.open(str(relative_path), "w", encoding="utf-8") as f:
+        f.write(markdown_content)
+
+    # Add to navigation (use just the filename part for nav title)
+    nav[str(relative_path)] = f"{resource_id}/{version} Core Report"
+
+    # Return relative path from compatibility/
+    return Path(safe_resource_id) / f"{version}_core"
 
 
 def generate_html_table(
@@ -48,6 +153,8 @@ def generate_html_table(
         ".score-high { color: #22863a; font-weight: 600; }",
         ".score-med { color: #e36209; }",
         ".score-low { color: #cb2431; }",
+        ".score-high a, .score-med a, .score-low a { color: inherit; text-decoration: underline; text-decoration-style: dotted; text-decoration-thickness: 1px; text-underline-offset: 2px; }",
+        ".score-high a:hover, .score-med a:hover, .score-low a:hover { text-decoration-style: solid; text-decoration-thickness: 2px; }",
         "@media (prefers-color-scheme: dark) {",
         "  .reports-table th { background: #2d2d2d; color: #e8e8e8; }",
         "  .reports-table th:hover { background: #3d3d3d; }",
@@ -80,9 +187,11 @@ def generate_html_table(
         '      <th data-sort="type">Type</th>',
         '      <th data-sort="status">Status</th>',
         '      <th data-sort="metadata">Metadata</th>',
-        '      <th data-sort="core">Core</th>',
+        '      <th data-sort="core">Core (latest)</th>',
         '      <th data-sort="overall">Overall</th>',
-        '      <th data-sort="tools">Partner Tools</th>',
+        '      <th data-sort="biapy">BiaPy</th>',
+        '      <th data-sort="careamics">CAREamics</th>',
+        '      <th data-sort="ilastik">ilastik</th>',
         "    </tr>",
         "  </thead>",
         "  <tbody>",
@@ -114,9 +223,55 @@ def generate_html_table(
             else ("score-med" if metadata_val >= 0.3 else "score-low")
         )
 
+        biapy_val = row["biapy"]
+        biapy_class = (
+            "score-high"
+            if biapy_val >= 0.7
+            else ("score-med" if biapy_val >= 0.3 else "score-low")
+        )
+
+        careamics_val = row["careamics"]
+        careamics_class = (
+            "score-high"
+            if careamics_val >= 0.7
+            else ("score-med" if careamics_val >= 0.3 else "score-low")
+        )
+
+        ilastik_val = row["ilastik"]
+        ilastik_class = (
+            "score-high"
+            if ilastik_val >= 0.7
+            else ("score-med" if ilastik_val >= 0.3 else "score-low")
+        )
+
         # Create hyperlink to bioimage.io with version
         resource_link = f"https://bioimage.io/#/artifacts/{html.escape(row['id'])}/{html.escape(row['version'])}"
         id_html = f'<a href="{resource_link}" target="_blank">{html.escape(row["id"])}/{html.escape(row["version"])}</a>'
+
+        # Create core cell: if overall and latest are identical (as displayed),
+        # show only the latest score as a hyperlink (no parentheses).
+        # Otherwise show: overall (latest) with the latest being a link when available.
+        if row.get("core_latest_str") is not None and row.get("core_report_page"):
+            core_link = row["core_report_page"].replace("\\", "/")
+            core_latest_version_esc = html.escape(row.get("core_latest_version", ""))
+            if row.get("core_str") == row.get("core_latest_str"):
+                core_html = (
+                    f'<a href="{core_link}" title="View detailed core {core_latest_version_esc} report">'
+                    f"{html.escape(row['core_latest_str'])}</a>"
+                )
+            else:
+                core_html = (
+                    f"{html.escape(row['core_str'])} ("
+                    f'<a href="{core_link}" title="View detailed core {core_latest_version_esc} report">'
+                    f"{html.escape(row['core_latest_str'])}</a>)"
+                )
+        elif row.get("core_latest_str") is not None:
+            if row.get("core_str") == row.get("core_latest_str"):
+                core_html = f"{html.escape(row['core_latest_str'])}"
+            else:
+                core_html = f"{html.escape(row['core_str'])} ({html.escape(row['core_latest_str'])})"
+        else:
+            core_html = html.escape(row["core_str"])
 
         html_parts.extend(
             [
@@ -125,9 +280,11 @@ def generate_html_table(
                 f"      <td>{html.escape(row['type'])}</td>",
                 f'      <td class="{status_class}">{html.escape(row["status"])}</td>',
                 f'      <td class="{metadata_class}" data-value="{metadata_val}">{html.escape(row["metadata_str"])}</td>',
-                f'      <td class="{core_class}" data-value="{core_val}">{html.escape(row["core_str"])}</td>',
+                f'      <td class="{core_class}" data-value="{core_val}">{core_html}</td>',
                 f'      <td class="{overall_class}" data-value="{overall_val}">{html.escape(row["overall_str"])}</td>',
-                f"      <td>{html.escape(row['tools'])}</td>",
+                f'      <td class="{biapy_class}" data-value="{biapy_val}">{html.escape(row["biapy_str"])}</td>',
+                f'      <td class="{careamics_class}" data-value="{careamics_val}">{html.escape(row["careamics_str"])}</td>',
+                f'      <td class="{ilastik_class}" data-value="{ilastik_val}">{html.escape(row["ilastik_str"])}</td>',
                 "    </tr>",
             ]
         )
@@ -170,7 +327,7 @@ def generate_html_table(
             "      const aCell = a.children[getColumnIndex(column)];",
             "      const bCell = b.children[getColumnIndex(column)];",
             "      ",
-            '      if (column === "core" || column === "overall" || column === "metadata") {',
+            '      if (column === "core" || column === "overall" || column === "metadata" || column === "biapy" || column === "careamics" || column === "ilastik") {',
             "        aVal = parseFloat(aCell.dataset.value) || 0;",
             "        bVal = parseFloat(bCell.dataset.value) || 0;",
             "      } else {",
@@ -189,7 +346,7 @@ def generate_html_table(
             "  }",
             "  ",
             "  function getColumnIndex(column) {",
-            "    const map = { id: 0, type: 1, status: 2, metadata: 3, core: 4, overall: 5, tools: 6 };",
+            "    const map = { id: 0, type: 1, status: 2, metadata: 3, core: 4, overall: 5, biapy: 6, careamics: 7, ilastik: 8 };",
             "    return map[column];",
             "  }",
             "  ",
@@ -225,15 +382,15 @@ def generate_html_table(
     return "\n".join(html_parts)
 
 
-def generate_reports_overview(
+def generate_compatibility_overview(
     index_path: Path = Path("gh-pages/index.json"),
-    output_path: Path = Path("docs/reports_overview.md"),
+    output_path: Path = Path("docs/compatibility"),
 ) -> None:
     """Generate a markdown page with compatibility report overview.
 
     Args:
         index_path: Path to index.json
-        output_path: Path to write the markdown overview
+        output_path: Directory to write the markdown overview
     """
     index = load_index(index_path)
 
@@ -241,13 +398,13 @@ def generate_reports_overview(
 
     # Start building markdown
     lines = [
-        "<!-- This file is auto-generated by scripts/generate_reports_overview.py. Do not edit manually. -->",
+        "<!-- This file is auto-generated by scripts/generate_compatibility_overview.py. Do not edit manually. -->",
         "",
         "# Compatibility Reports Overview",
         "",
         f"This page provides an overview of all {index.total} resources in the bioimage.io collection.",
         "",
-        f"*Last updated: {index.timestamp}*",
+        f"*Last updated: {index.timestamp.isoformat(sep=' ', timespec='minutes')}*",
         "",
     ]
 
@@ -298,16 +455,19 @@ def generate_reports_overview(
         stats_by_type[item_type]["core_scores"].append(core_compat)
         stats_by_type[item_type]["overall_scores"].append(overall_compat)
 
-        # Get tool compatibility summary
+        # Get tool compatibility scores
         tool_compat = scores.get("tool_compatibility", {})
-        tool_summary_parts: list[str] = []
-        for tool_name in ["biapy", "careamics", "ilastik"]:
-            if tool_name in tool_compat:
-                score = tool_compat[tool_name]
-                tool_summary_parts.append(f"{tool_name}: {score:.2f}")
-                stats_by_type[item_type][f"{tool_name}_scores"].append(score)
+        biapy_score = tool_compat.get("biapy", 0.0)
+        careamics_score = tool_compat.get("careamics", 0.0)
+        ilastik_score = tool_compat.get("ilastik", 0.0)
 
-        tool_summary = ", ".join(tool_summary_parts) if tool_summary_parts else "—"
+        # Collect per-tool statistics
+        if biapy_score > 0:
+            stats_by_type[item_type]["biapy_scores"].append(biapy_score)
+        if careamics_score > 0:
+            stats_by_type[item_type]["careamics_scores"].append(careamics_score)
+        if ilastik_score > 0:
+            stats_by_type[item_type]["ilastik_scores"].append(ilastik_score)
 
         # Extract prefix and short ID
         if "/" in item_id:
@@ -315,6 +475,71 @@ def generate_reports_overview(
         else:
             prefix = ""
             short_id = item_id
+
+        # Generate report page if core details are available and determine latest core-version score
+        core_report_page = None
+        core_latest_str: Optional[str] = None
+        core_latest_version: Optional[str] = None
+        if "tests" in summary and "bioimageio.core" in summary["tests"]:
+            # Get the latest core report
+            core_tests = summary["tests"]["bioimageio.core"]
+            if core_tests:
+                # Determine latest core version by semantic version sort
+                try:
+                    latest_core_version = max(core_tests.keys(), key=parse_version)
+                except Exception:
+                    # Fallback to first key if parsing fails
+                    latest_core_version = next(iter(core_tests.keys()))
+
+                core_report = core_tests[latest_core_version]
+
+                # Determine latest core-version score if available
+                latest_score_val: Optional[float] = None
+                if isinstance(core_report, dict):
+                    # try common fields
+                    score_val = core_report.get("score")
+                    if isinstance(score_val, (int, float, str)):
+                        try:
+                            latest_score_val = float(score_val)
+                        except Exception:
+                            latest_score_val = None
+                    else:
+                        details_obj = core_report.get("details")
+                        if isinstance(details_obj, dict):
+                            try:
+                                vs = ValidationSummary.model_validate(details_obj)
+                                # Prefer an attribute named 'score' if present, otherwise try overall/compatibility
+                                latest_score_val = getattr(vs, "score", None)
+                                if latest_score_val is None:
+                                    latest_score_val = getattr(vs, "overall", None)
+                                if latest_score_val is None:
+                                    latest_score_val = getattr(
+                                        vs, "compatibility", None
+                                    )
+                                if latest_score_val is not None:
+                                    latest_score_val = float(latest_score_val)
+                            except Exception:
+                                pass
+
+                    # Generate report page from details if available
+                    details_for_page = core_report.get("details")
+                    if isinstance(details_for_page, dict):
+                        try:
+                            report_path = generate_compatibility_page(
+                                short_id,
+                                latest_version,
+                                details_for_page,
+                                output_path,
+                            )
+                            core_report_page = str(report_path).replace("\\", "/")
+                        except Exception as e:
+                            print(
+                                f"Warning: Failed to generate report page for {item_id}/{latest_version}: {e}"
+                            )
+
+                if latest_score_val is not None:
+                    core_latest_str = f"{latest_score_val:.2f}"
+                    core_latest_version = str(latest_core_version)
 
         row_data = {
             "id": short_id,  # Use short ID without prefix
@@ -326,14 +551,37 @@ def generate_reports_overview(
             "metadata_str": f"{metadata_completeness:.2f}",
             "core": core_compat,
             "core_str": f"{core_compat:.2f}",
+            "core_report_page": core_report_page,
+            "core_latest_str": core_latest_str,
+            "core_latest_version": core_latest_version,
             "overall": overall_compat,
             "overall_str": f"{overall_compat:.2f}",
-            "tools": tool_summary,
+            "biapy": biapy_score,
+            "biapy_str": f"{biapy_score:.2f}",
+            "careamics": careamics_score,
+            "careamics_str": f"{careamics_score:.2f}",
+            "ilastik": ilastik_score,
+            "ilastik_str": f"{ilastik_score:.2f}",
         }
 
         if prefix not in resources_by_prefix:
             resources_by_prefix[prefix] = []
         resources_by_prefix[prefix].append(row_data)
+
+    lines.extend(
+        [
+            "",
+            "## Legend",
+            "",
+            "- **Metadata**: Metadata completeness score (0.0-1.0)",
+            "- **Core**: bioimageio.core compatibility score (0.0-1.0)",
+            "- **Overall**: Overall compatibility score across all tools (0.0-1.0)",
+            "- **BiaPy**: BiaPy tool compatibility score (0.0-1.0)",
+            "- **CAREamics**: CAREamics tool compatibility score (0.0-1.0)",
+            "- **ilastik**: ilastik tool compatibility score (0.0-1.0)",
+            "",
+        ]
+    )
 
     # Generate summary by type table
     lines.extend(
@@ -407,24 +655,24 @@ def generate_reports_overview(
         lines.append(html_table)
         lines.append("")
 
-    lines.extend(
-        [
-            "",
-            "## Legend",
-            "",
-            "- **Metadata**: Metadata completeness score (0.0-1.0)",
-            "- **Core**: bioimageio.core compatibility score (0.0-1.0)",
-            "- **Overall**: Overall compatibility score across all tools (0.0-1.0)",
-            "- **Partner Tools**: Compatibility scores for partner tools (biapy, careamics, ilastik)",
-            "",
-        ]
-    )
+    # Write output using gen-files plugin
+    content = "\n".join(lines)
+    index_file_path = output_path / "index.md"
+    with mkdocs_gen_files.open(str(index_file_path), "w", encoding="utf-8") as f:
+        f.write(content)
 
-    # Write output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    _ = output_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"Generated reports overview at {output_path}")
+    # Register main overview page in navigation
+    nav[str(index_file_path)] = "Compatibility Reports"
+
+    print(f"Generated compatibility overview at {output_path}")
 
 
-if __name__ == "__main__":
-    generate_reports_overview()
+# Generate during MkDocs build via gen-files plugin
+generate_compatibility_overview(
+    index_path=Path("gh-pages/index.json"),
+    output_path=Path("compatibility"),
+)
+
+# Write the navigation structure using the nav object
+with mkdocs_gen_files.open("compatibility/SUMMARY.md", "w") as nav_file:
+    nav_file.writelines(nav.build_literate_nav())

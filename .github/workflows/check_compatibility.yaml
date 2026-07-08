@@ -24,6 +24,11 @@ on:
             deepimagej,
             ilastik,
           ]
+      recompute-reports-pattern:
+        type: string
+        description: 'File name pattern to skip restoring matching reports (to recompute them).'
+        required: false
+        default: ''
 
   push:
     branches: [main]
@@ -41,26 +46,36 @@ jobs:
     needs: index
     if: needs.index.outputs.cache-hit != 'true' || contains(github.event.inputs.rerun, 'all') || contains(github.event.inputs.rerun, 'biapy')
     uses: ./.github/workflows/check_compatibility_biapy.yaml
+    with:
+      recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
     secrets: inherit
   bioimageio_core:
     needs: index
     if: needs.index.outputs.cache-hit != 'true' || contains(github.event.inputs.rerun, 'all') || contains(github.event.inputs.rerun, 'bioimageio.core')
     uses: ./.github/workflows/check_compatibility_bioimageio_core.yaml
+    with:
+      recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
     secrets: inherit
   careamics:
     needs: index
     if: needs.index.outputs.cache-hit != 'true' || contains(github.event.inputs.rerun, 'all') || contains(github.event.inputs.rerun, 'careamics')
     uses: ./.github/workflows/check_compatibility_careamics.yaml
+    with:
+      recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
     secrets: inherit
   deepimagej:
     needs: index
     if: needs.index.outputs.cache-hit != 'true' || contains(github.event.inputs.rerun, 'all') || contains(github.event.inputs.rerun, 'deepimagej')
     uses: ./.github/workflows/check_compatibility_deepimagej.yaml
+    with:
+      recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
     secrets: inherit
   ilastik:
     needs: index
     if: needs.index.outputs.cache-hit != 'true' || contains(github.event.inputs.rerun, 'all') || contains(github.event.inputs.rerun, 'ilastik')
     uses: ./.github/workflows/check_compatibility_ilastik.yaml
+    with:
+      recompute-reports-pattern: ${{ inputs.recompute-reports-pattern }}
     secrets: inherit
 
   summarize:
@@ -91,6 +106,7 @@ jobs:
           REPORTS: gh-pages/reports
           RUN_URL: ${{github.server_url}}/${{github.repository}}/actions/runs/${{github.run_id}}
           HYPHA_API_TOKEN: ${{secrets.HYPHA_API_TOKEN}}
+      - run: cp bioimageio_collection_config.json gh-pages/
       - name: Deploy to gh-pages 🚀
         uses: JamesIves/github-pages-deploy-action@v4
         with:
