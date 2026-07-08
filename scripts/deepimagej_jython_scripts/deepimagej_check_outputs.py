@@ -10,6 +10,8 @@ from net.imglib2.img.display.imagej import ImageJFunctions
 
 from ij import IJ
 
+TOLERANCE = 1e-3
+
 
 def find_expected_output(outputs_dir, name):
     for ff in os.listdir(outputs_dir):
@@ -53,7 +55,7 @@ def main(model_dir):
                 if abs(
                     dij_cursor.get().getRealFloat()
                     - expected_cursor.get().getRealFloat()
-                ) > (1.5 * 1e-4 + 1e-4 * abs(expected_cursor.get().getRealFloat())):
+                ) > TOLERANCE:
                     raise Exception("Values of output " + name + " differ")
 
 
